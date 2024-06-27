@@ -1,0 +1,2 @@
+[alias]
+create-data-file = "run --bin create_data_file"

@@ -1,0 +1,8 @@
+[package]
+name = "one-billion-row"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "create_data_file"
+path = "scripts/create_data_file.rs"
