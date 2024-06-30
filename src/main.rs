@@ -1,3 +1,4 @@
+#![feature(slice_split_once)]
 use std::{
     collections::BTreeMap,
     fmt::Display,
@@ -12,6 +13,7 @@ use std::{
 
 type StationsMap = BTreeMap<String, StationMetrics>;
 type ChunkReader = Take<BufReader<File>>;
+type V = i32;
 
 fn main() {
     /*
@@ -105,18 +107,52 @@ fn process_chunk(file_path: &Path, interval: Interval) -> StationsMap {
     build_map(chunk_reader).unwrap()
 }
 
-fn build_map(chunk_reader: ChunkReader) -> Result<BTreeMap<String, StationMetrics>> {
+fn build_map(mut chunk_reader: ChunkReader) -> Result<StationsMap> {
     let mut station_to_metrics = StationsMap::new();
-    for line in chunk_reader.lines() {
-        let line = line?;
-        let (city, temperature) = line.split_once(';').unwrap();
-        let temperature: f32 = temperature.parse().expect("Incorrect temperature");
+    let mut line = Vec::new();
+
+    while chunk_reader.read_until(b'\n', &mut line)? != 0 {
+        if line.last() == Some(&b'\n') {
+            line.pop(); // Remove the '\n' character
+        }
+
+        let (city, temperature) = &line.split_once(|&c| c == b';').unwrap();
+        let city = std::str::from_utf8(city).unwrap();
+        let temperature = parse_temperature(&temperature);
+
         station_to_metrics
-            .entry(city.to_string())
+            .entry(city.to_owned())
             .or_default()
             .update(temperature);
+
+        line.clear();
     }
+
     Ok(station_to_metrics)
+}
+
+// Assuming the file always have 1-2 integer parts and always 1 decimal digit
+fn parse_temperature(mut s: &[u8]) -> V {
+    let neg = if s[0] == b'-' {
+        s = &s[1..];
+        true
+    } else {
+        false
+    };
+
+    let (a, b, c) = match s {
+        [a, b, b'.', c] => (a - b'0', b - b'0', c - b'0'),
+        [b, b'.', c] => (0, b - b'0', c - b'0'),
+        _ => panic!("Unknown pattern {:?}", std::str::from_utf8(s).unwrap()),
+    };
+
+    let v = (a as V) * 100 + (b as V) * 10 + (c as V);
+
+    if neg {
+        -v
+    } else {
+        v
+    }
 }
 
 fn merge_maps(a: StationsMap, b: &StationsMap) -> StationsMap {
@@ -129,29 +165,33 @@ fn merge_maps(a: StationsMap, b: &StationsMap) -> StationsMap {
 
 fn print_metrics(station_to_metrics: &StationsMap) {
     // No need to sort as BTreeMap already sorts keys in ascending order.
-    for (i, (name, state)) in station_to_metrics.into_iter().enumerate() {
+    for (i, (city, state)) in station_to_metrics.into_iter().enumerate() {
         if i == 0 {
-            print!("{name}={state}");
+            print!("{city}={state}");
         } else {
-            print!(", {name}={state}");
+            print!(", {city}={state}");
         }
     }
 }
 
+fn format_temperature(v: V) -> String {
+    format!("{:.1}", v as f64 / 10.0)
+}
+
 #[derive(Debug)]
 struct StationMetrics {
-    sum_temperature: f64,
+    sum_temperature: V,
     num_records: u32,
-    min_temperature: f32,
-    max_temperature: f32,
+    min_temperature: V,
+    max_temperature: V,
 }
 
 impl StationMetrics {
-    fn update(&mut self, temperature: f32) {
+    fn update(&mut self, temperature: V) {
         self.max_temperature = self.max_temperature.max(temperature);
         self.min_temperature = self.min_temperature.min(temperature);
         self.num_records += 1;
-        self.sum_temperature += temperature as f64;
+        self.sum_temperature += temperature;
     }
 
     fn merge(&mut self, other: &Self) {
@@ -165,21 +205,23 @@ impl StationMetrics {
 impl Default for StationMetrics {
     fn default() -> Self {
         StationMetrics {
-            sum_temperature: 0.0,
+            sum_temperature: 0,
             num_records: 0,
-            min_temperature: f32::MAX,
-            max_temperature: f32::MIN,
+            min_temperature: V::MAX,
+            max_temperature: V::MIN,
         }
     }
 }
 
 impl Display for StationMetrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let avg_temperature = self.sum_temperature / (self.num_records as f64);
+        let avg_temperature = format_temperature(self.sum_temperature / (self.num_records as V));
         write!(
             f,
-            "{:.1}/{avg_temperature:.1}/{:.1}",
-            self.min_temperature, self.max_temperature
+            "{}/{}/{}",
+            format_temperature(self.min_temperature),
+            avg_temperature,
+            format_temperature(self.max_temperature)
         )
     }
 }
