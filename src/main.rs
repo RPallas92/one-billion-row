@@ -11,13 +11,13 @@ use std::{
     time::Instant,
 };
 
-type StationsMap = BTreeMap<String, StationMetrics>;
+type StationsMap = BTreeMap<u64, StationMetrics>;
 type ChunkReader = Take<BufReader<File>>;
 type V = i32;
 
 fn main() {
     /*
-    The release build is executed in around 17.96 seconds on SER5 PRO MAX:
+    The release build is executed in around 6.76 seconds on SER5 PRO MAX:
        - CPU: AMD Ryzen 7 5800H with Radeon Graphics (16) @ 3.200GHz
        - GPU: AMD ATI Radeon Vega Series / Radeon Vega Mobile Series
        - Memory: 28993MiB
@@ -117,18 +117,37 @@ fn build_map(mut chunk_reader: ChunkReader) -> Result<StationsMap> {
         }
 
         let (city, temperature) = &line.split_once(|&c| c == b';').unwrap();
-        let city = std::str::from_utf8(city).unwrap();
         let temperature = parse_temperature(&temperature);
 
         station_to_metrics
-            .entry(city.to_owned())
-            .or_default()
+            .entry(to_key(city))
+            .or_insert(StationMetrics {
+                city: std::str::from_utf8(city).unwrap().to_string(),
+                ..StationMetrics::default()
+            })
             .update(temperature);
 
         line.clear();
     }
 
     Ok(station_to_metrics)
+}
+
+fn to_key(data: &[u8]) -> u64 {
+    let mut hash = 0u64;
+    let len = data.len();
+    unsafe {
+        if len >= 8 {
+            hash = *(data.as_ptr() as *const u64);
+        } else {
+            for i in 0..len {
+                hash |= (*data.get_unchecked(i) as u64) << (i * 8);
+            }
+        }
+    }
+
+    hash ^= len as u64;
+    hash
 }
 
 // Assuming the file always have 1-2 integer parts and always 1 decimal digit
@@ -158,14 +177,22 @@ fn parse_temperature(mut s: &[u8]) -> V {
 fn merge_maps(a: StationsMap, b: &StationsMap) -> StationsMap {
     let mut merged_map = a;
     for (k, v) in b {
-        merged_map.entry(k.into()).or_default().merge(v);
+        merged_map
+            .entry(*k)
+            .or_insert(StationMetrics {
+                city: v.city.clone(),
+                ..StationMetrics::default()
+            })
+            .merge(v);
     }
+
     merged_map
 }
 
 fn print_metrics(station_to_metrics: &StationsMap) {
     // No need to sort as BTreeMap already sorts keys in ascending order.
-    for (i, (city, state)) in station_to_metrics.into_iter().enumerate() {
+    for (i, (_name, state)) in station_to_metrics.into_iter().enumerate() {
+        let city = &state.city;
         if i == 0 {
             print!("{city}={state}");
         } else {
@@ -184,6 +211,7 @@ struct StationMetrics {
     num_records: u32,
     min_temperature: V,
     max_temperature: V,
+    city: String,
 }
 
 impl StationMetrics {
@@ -209,6 +237,7 @@ impl Default for StationMetrics {
             num_records: 0,
             min_temperature: V::MAX,
             max_temperature: V::MIN,
+            city: "".to_string(),
         }
     }
 }
