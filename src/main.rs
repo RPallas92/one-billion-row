@@ -1,8 +1,9 @@
 #![feature(slice_split_once)]
 use std::{
-    collections::BTreeMap,
+    collections::HashMap,
     fmt::Display,
     fs::{self, File},
+    hash::{BuildHasher, Hasher},
     io::{BufRead, BufReader, Read, Result, Seek, SeekFrom, Take},
     os::unix::fs::MetadataExt,
     path::Path,
@@ -11,13 +12,42 @@ use std::{
     time::Instant,
 };
 
-type StationsMap = BTreeMap<u64, StationMetrics>;
+#[derive(Default)]
+struct NoOpHasher {
+    hash: u64,
+}
+
+impl Hasher for NoOpHasher {
+    fn write(&mut self, _bytes: &[u8]) {
+        panic!("NoOpHasher only supports u64 values");
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.hash = i;
+    }
+
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+struct NoOpBuildHasher;
+
+impl BuildHasher for NoOpBuildHasher {
+    type Hasher = NoOpHasher;
+
+    fn build_hasher(&self) -> NoOpHasher {
+        NoOpHasher::default()
+    }
+}
+
+type StationsMap = HashMap<u64, StationMetrics, NoOpBuildHasher>;
 type ChunkReader = Take<BufReader<File>>;
 type V = i32;
 
 fn main() {
     /*
-    The release build is executed in around 6.76 seconds on SER5 PRO MAX:
+    The release build is executed in around 5.85 seconds on SER5 PRO MAX:
        - CPU: AMD Ryzen 7 5800H with Radeon Graphics (16) @ 3.200GHz
        - GPU: AMD ATI Radeon Vega Series / Radeon Vega Mobile Series
        - Memory: 28993MiB
@@ -51,7 +81,9 @@ fn main() {
         .lock()
         .unwrap()
         .iter()
-        .fold(StationsMap::default(), |a, b| merge_maps(a, &b));
+        .fold(HashMap::with_hasher(NoOpBuildHasher), |a, b| {
+            merge_maps(a, &b)
+        });
 
     print_metrics(&result);
     println!("\n Execution time: {:?}", start.elapsed());
@@ -108,7 +140,7 @@ fn process_chunk(file_path: &Path, interval: Interval) -> StationsMap {
 }
 
 fn build_map(mut chunk_reader: ChunkReader) -> Result<StationsMap> {
-    let mut station_to_metrics = StationsMap::new();
+    let mut station_to_metrics = StationsMap::with_hasher(NoOpBuildHasher);
     let mut line = Vec::new();
 
     while chunk_reader.read_until(b'\n', &mut line)? != 0 {
@@ -190,8 +222,9 @@ fn merge_maps(a: StationsMap, b: &StationsMap) -> StationsMap {
 }
 
 fn print_metrics(station_to_metrics: &StationsMap) {
-    // No need to sort as BTreeMap already sorts keys in ascending order.
-    for (i, (_name, state)) in station_to_metrics.into_iter().enumerate() {
+    let mut all: Vec<_> = station_to_metrics.into_iter().collect();
+    all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    for (i, (_name, state)) in all.into_iter().enumerate() {
         let city = &state.city;
         if i == 0 {
             print!("{city}={state}");
