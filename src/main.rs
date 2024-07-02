@@ -154,7 +154,7 @@ fn build_map(mut chunk_reader: ChunkReader) -> Result<StationsMap> {
         station_to_metrics
             .entry(to_key(city))
             .or_insert(StationMetrics {
-                city: std::str::from_utf8(city).unwrap().to_string(),
+                city: unsafe { std::str::from_utf8_unchecked(city).to_string() },
                 ..StationMetrics::default()
             })
             .update(temperature);
