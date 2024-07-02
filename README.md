@@ -14,3 +14,6 @@ Compile a release version and execute it:
 ```
 cargo build --release && ./target/release/one-billion-row  
 ```
+
+
+Full explanation on https://rpallas92.github.io/1brc/
