@@ -1,4 +1,3 @@
-#![feature(slice_split_once)]
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -148,7 +147,22 @@ fn build_map(mut chunk_reader: ChunkReader) -> Result<StationsMap> {
             line.pop(); // Remove the '\n' character
         }
 
-        let (city, temperature) = &line.split_once(|&c| c == b';').unwrap();
+        // The position of the separator (';') can only be in one of three positions:
+        // - line_length - 4: for lines like "city_name;2.3"
+        // - line_length - 5: for lines like "city_name;12.3" or "city_name;-2.3"
+        // - line_length - 6: for lines like "city_name;-12.3"
+
+        let line_length = line.len();
+        let separator_pos = if line[line_length - 4] == b';' {
+            line_length - 4
+        } else if line[line_length - 5] == b';' {
+            line_length - 5
+        } else {
+            line_length - 6
+        };
+
+        let (city, temperature) = line.split_at(separator_pos);
+        let temperature = &temperature[1..]; // To remove the separator (';').
         let temperature = parse_temperature(&temperature);
 
         station_to_metrics
